@@ -626,5 +626,6 @@ typedef struct
 
 
 #define HSI_CLOCK				16000000U
+#define HSE_CLOCK               25000000U /* Black pill*/
 
 #endif
