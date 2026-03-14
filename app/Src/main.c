@@ -1,6 +1,7 @@
 #include "driver_clock.h"
 #include "driver_systick.h"
 #include "driver_gpio.h"
+#include "driver_usb.h"
 
 #define LED_PORT    GPIOC
 #define LED_PIN     GPIO_PIN_NO_13
@@ -42,13 +43,24 @@ int main(void)
     GPIO_Init(&led);
     GPIO_WriteToOutputPin(LED_PORT, LED_PIN, GPIO_PIN_SET); 
 
+    USB_CDC_Init();
+
+    for (int i = 0; i < 6; i++)
+    {
+        GPIO_ToggleOutputPin(LED_PORT, LED_PIN);
+        ticks_delay(500);
+    }
+
+    uint8_t buf[64];
 
     while(1)
     {
-        for (int i = 0; i < 6; i++)
+        uint16_t n = USB_CDC_Read(buf, sizeof(buf));
+ 
+        if (n > 0)
         {
+            USB_CDC_Transmit(buf, n);
             GPIO_ToggleOutputPin(LED_PORT, LED_PIN);
-            ticks_delay(500);
         }
     }
 }

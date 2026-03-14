@@ -55,6 +55,7 @@
 #define APB2PERIPH_BASE						0x40010000U
 #define AHB1PERIPH_BASE						0x40020000U
 #define AHB2PERIPH_BASE						0x50000000U
+#define USB_OTG_FS_BASEADDR                 (AHB2PERIPH_BASE + 0x0000U)
 
 
 /*
@@ -443,6 +444,11 @@ typedef struct
 
 #define ADC1_PCLK_EN()		(RCC->APB2ENR |= (1 << 8))
 
+/*
+ * Clock enable macros for USB peripherals
+ */
+ 
+#define USB_OTG_FS_PCLK_EN()   (RCC->AHB2ENR |= (1 << 7))
 
 /*
  * Clock disable macros for GPIOx peripherals
@@ -505,6 +511,11 @@ typedef struct
 #define ADC1_PCLK_DI()		(RCC->APB2ENR &= ~(1 << 8))
 
 /*
+ * Clock disable macros for USB peripherals
+ */
+#define USB_OTG_FS_PCLK_DI()   (RCC->AHB2ENR &= ~(1 << 7))
+
+/*
  * 	Macros to reset GPIOx peripherals
  */
 
@@ -522,6 +533,7 @@ typedef struct
 #define UART2_REG_RESET()       do{RCC->APB1RSTR |= (1 << 17); RCC->APB1RSTR &= ~(1 << 17);}while(0)
 #define UART6_REG_RESET()       do{RCC->APB2RSTR |= (1 <<  5); RCC->APB2RSTR &= ~(1 << 5);}while(0)
 
+#define USB_OTG_FS_REG_RESET()  do{ RCC->AHB2RSTR |= (1 << 7); RCC->AHB2RSTR &= ~(1 << 7); }while(0)
 
 /*
  *  Macro to give the code of a port
@@ -562,6 +574,9 @@ typedef struct
 #define IRQ_NO_EXTI5 		10
 #define IRQ_NO_EXTI9_5 		23
 #define IRQ_NO_EXTI15_10 	40
+
+#define IRQ_NO_OTG_FS           67
+
 
 /*
  * IRQ Priority levels
@@ -627,5 +642,48 @@ typedef struct
 
 #define HSI_CLOCK				16000000U
 #define HSE_CLOCK               25000000U /* Black pill*/
+
+/*
+ *		USB
+ */
+
+/* Global registers */
+#define USB_OTG_GOTGCTL         MMIO32(USB_OTG_FS_BASEADDR + 0x000U)
+#define USB_OTG_GAHBCFG         MMIO32(USB_OTG_FS_BASEADDR + 0x008U)
+#define USB_OTG_GUSBCFG         MMIO32(USB_OTG_FS_BASEADDR + 0x00CU)
+#define USB_OTG_GRSTCTL         MMIO32(USB_OTG_FS_BASEADDR + 0x010U)
+#define USB_OTG_GINTSTS         MMIO32(USB_OTG_FS_BASEADDR + 0x014U)
+#define USB_OTG_GINTMSK         MMIO32(USB_OTG_FS_BASEADDR + 0x018U)
+#define USB_OTG_GRXSTSP         MMIO32(USB_OTG_FS_BASEADDR + 0x020U)
+#define USB_OTG_GRXFSIZ         MMIO32(USB_OTG_FS_BASEADDR + 0x024U)
+#define USB_OTG_DIEPTXF0        MMIO32(USB_OTG_FS_BASEADDR + 0x028U)
+#define USB_OTG_GCCFG           MMIO32(USB_OTG_FS_BASEADDR + 0x038U)
+#define USB_OTG_DIEPTXF(n)      MMIO32(USB_OTG_FS_BASEADDR + 0x104U + (((n)-1U)*0x04U))
+ 
+/* Device-mode registers */
+#define USB_OTG_DCFG            MMIO32(USB_OTG_FS_BASEADDR + 0x800U)
+#define USB_OTG_DCTL            MMIO32(USB_OTG_FS_BASEADDR + 0x804U)
+#define USB_OTG_DSTS            MMIO32(USB_OTG_FS_BASEADDR + 0x808U)
+#define USB_OTG_DIEPMSK         MMIO32(USB_OTG_FS_BASEADDR + 0x810U)
+#define USB_OTG_DOEPMSK         MMIO32(USB_OTG_FS_BASEADDR + 0x814U)
+#define USB_OTG_DAINT           MMIO32(USB_OTG_FS_BASEADDR + 0x818U)
+#define USB_OTG_DAINTMSK        MMIO32(USB_OTG_FS_BASEADDR + 0x81CU)
+ 
+/* IN endpoint registers (EP0..EP3) */
+#define USB_OTG_DIEPCTL(n)      MMIO32(USB_OTG_FS_BASEADDR + 0x900U + ((n)*0x20U))
+#define USB_OTG_DIEPINT(n)      MMIO32(USB_OTG_FS_BASEADDR + 0x908U + ((n)*0x20U))
+#define USB_OTG_DIEPTSIZ(n)     MMIO32(USB_OTG_FS_BASEADDR + 0x910U + ((n)*0x20U))
+#define USB_OTG_DTXFSTS(n)      MMIO32(USB_OTG_FS_BASEADDR + 0x918U + ((n)*0x20U))
+ 
+/* OUT endpoint registers (EP0..EP3) */
+#define USB_OTG_DOEPCTL(n)      MMIO32(USB_OTG_FS_BASEADDR + 0xB00U + ((n)*0x20U))
+#define USB_OTG_DOEPINT(n)      MMIO32(USB_OTG_FS_BASEADDR + 0xB08U + ((n)*0x20U))
+#define USB_OTG_DOEPTSIZ(n)     MMIO32(USB_OTG_FS_BASEADDR + 0xB10U + ((n)*0x20U))
+ 
+/* FIFO access (each EP has a 4 KB window) */
+#define USB_OTG_FIFO(n)         MMIO32(USB_OTG_FS_BASEADDR + 0x1000U + ((n)*0x1000U))
+ 
+/* Power and clock gating */
+#define USB_OTG_PCGCCTL         MMIO32(USB_OTG_FS_BASEADDR + 0xE00U)
 
 #endif

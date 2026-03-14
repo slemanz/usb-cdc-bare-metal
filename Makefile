@@ -43,6 +43,7 @@ DRIVERS		+= $(BUILD_DIR)/driver_interrupt.o
 DRIVERS		+= $(BUILD_DIR)/driver_systick.o
 DRIVERS		+= $(BUILD_DIR)/driver_timer.o
 DRIVERS		+= $(BUILD_DIR)/driver_uart.o
+DRIVERS		+= $(BUILD_DIR)/driver_usb.o
 
 PREREQ = $(BUILD_DIR)
 
