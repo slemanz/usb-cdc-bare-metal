@@ -224,6 +224,11 @@ void Reset_Handler(void)
     }
 
 
+    // Enable FPU (CP10/CP11 full access) – required when compiled with -mfloat-abi=hard
+    *(volatile uint32_t *)0xE000ED88UL |= ((3UL << 20) | (3UL << 22));
+    __asm volatile ("DSB");
+    __asm volatile ("ISB");
+
     // call init function of std. library
     __libc_init_array();
 

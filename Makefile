@@ -2,7 +2,7 @@ CC=arm-none-eabi-gcc
 TARGET=flash
 
 MACH=-mcpu=cortex-m4
-FLOAT=-mfloat-abi=hard
+FLOAT=-mfloat-abi=hard -mfpu=fpv4-sp-d16
 
 BUILD_DIR = Build
 ROOT_DIR = .

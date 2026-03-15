@@ -792,6 +792,12 @@ void USB_CDC_Init(void)
     while (USB_OTG_GRSTCTL & GRSTCTL_CSRST) {}
     delay(100000);
 
+    /* ── Soft-disconnect BEFORE powering transceiver ── */
+    USB_OTG_DCTL |= DCTL_SDIS;
+
+    /* ── Restart PHY clock ── */
+    USB_OTG_PCGCCTL = 0;
+
     /* ── Power up transceiver ── */
     USB_OTG_GCCFG |= GCCFG_PWRDWN;
 
@@ -800,13 +806,9 @@ void USB_CDC_Init(void)
     USB_OTG_GUSBCFG |= GUSBCFG_FDMOD;
     delay(700000);  /* HAL uses 50 ms */
 
-    /* ── Disable VBUS sensing, force B-session valid (Black Pill has no VBUS sense) ── */
+    /* ── Disable VBUS sensing (Black Pill has no VBUS sense) ── */
     USB_OTG_GCCFG &= ~((1U << 18) | (1U << 19));  /* clear VBUSBSEN, VBUSASEN */
     USB_OTG_GCCFG |= GCCFG_NOVBUSSENS;             /* VBUS always valid */
-    USB_OTG_GOTGCTL |= (1U << 7) | (1U << 6);      /* BVALOEN | BVALOVAL */
-
-    /* ── Restart PHY clock ── */
-    USB_OTG_PCGCCTL = 0;
 
     /* ── Speed = Full Speed ── */
     USB_OTG_DCFG |= DCFG_DSPD_FS;
@@ -831,6 +833,9 @@ void USB_CDC_Init(void)
         USB_OTG_DOEPINT(i) = 0xFFU;
     }
 
+    /* ── Clear all pending global interrupt flags ── */
+    USB_OTG_GINTSTS = 0xBFFFFFFFU;
+
     /* ── Enable interrupts ── */
     USB_OTG_GINTMSK = GINT_USBRST | GINT_ENUMDNE
                      | GINT_IEPINT | GINT_OEPINT
@@ -841,15 +846,15 @@ void USB_CDC_Init(void)
     USB_OTG_DOEPMSK  = DEPINT_XFRC | DEPINT_STUP;
     USB_OTG_DAINTMSK = DAINT_IN(0) | DAINT_OUT(0);
 
-    /* ── Connect (remove soft-disconnect) BEFORE enabling global interrupt ── */
-    USB_OTG_DCTL &= ~DCTL_SDIS;
-    delay(50000);  /* HAL waits 3 ms after connect */
-
-    /* ── Enable global interrupt (after connect, per HAL sequence) ── */
+    /* ── Enable global interrupt BEFORE connect ── */
     USB_OTG_GAHBCFG |= GAHBCFG_GINTMSK;
 
     /* ── NVIC ── */
     interrupt_Config(IRQ_NO_OTG_FS, ENABLE);
+
+    /* ── Connect (remove soft-disconnect) — host sees D+ pull-up now ── */
+    USB_OTG_DCTL &= ~DCTL_SDIS;
+    delay(50000);  /* stabilization */
 }
 
 
