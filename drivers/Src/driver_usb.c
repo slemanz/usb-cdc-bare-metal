@@ -245,6 +245,7 @@ static struct
     uint16_t        tx_remaining;
     uint8_t         pending_addr;   /* address to apply after STATUS IN */
     uint8_t         configured;     /* SET_CONFIGURATION received */
+    uint8_t         ep0_data_out;   /* 1 = expecting DATA OUT phase on EP0 */
 
     /* CDC */
     LineCoding_t    line_coding;
@@ -340,10 +341,12 @@ static void rb_push(uint8_t byte)
 /* Prepare EP0 OUT to receive the next SETUP packet */
 static void ep0_prepare_setup(void)
 {
+    /* HAL non-DMA mode: only set STUPCNT + PKTCNT + size, do NOT set EPENA/CNAK.
+     * The hardware handles SETUP reception automatically. Setting EPENA/CNAK
+     * causes spurious XFRC interrupts that corrupt enumeration. */
     USB_OTG_DOEPTSIZ(0) = (3U << DEPTSIZ_STUPCNT_POS)   /* accept 3 back-to-back */
                          | (1U << DEPTSIZ_PKTCNT_POS)
-                         | EP0_MPS;
-    USB_OTG_DOEPCTL(0) |= DEPCTL_EPENA | DEPCTL_CNAK;
+                         | (3U * 8U);                     /* 3 SETUP packets */
 }
 
 /* Send data via EP0 IN (to the host) */
@@ -380,6 +383,7 @@ static void ep0_stall(void)
 /* Prepare EP0 OUT to receive data (DATA OUT stage) */
 static void ep0_prepare_rx(uint16_t len)
 {
+    usb.ep0_data_out = 1;
     uint16_t chunk = (len > EP0_MPS) ? EP0_MPS : len;
     USB_OTG_DOEPTSIZ(0) = (1U << DEPTSIZ_PKTCNT_POS) | chunk;
     USB_OTG_DOEPCTL(0) |= DEPCTL_EPENA | DEPCTL_CNAK;
@@ -576,44 +580,56 @@ void OTG_FS_IRQHandler(void)
     /* ── USB Reset ── */
     if (gint & GINT_USBRST)
     {
-        USB_OTG_GINTSTS = GINT_USBRST;
+        /* Clear remote wakeup signaling (HAL does this first) */
+        USB_OTG_DCTL &= ~(1U << 0);   /* RWUSIG = 0 */
 
-        /* Clear address and state */
-        USB_OTG_DCFG &= ~DCFG_DAD_MSK;
+        /* Flush all TX FIFOs */
+        flush_tx(0x10);
+
+        /* Clear state */
         usb.configured   = 0;
         usb.pending_addr  = 0;
         usb.tx_busy       = 0;
 
-        /* Reset endpoint masks */
-        USB_OTG_DAINTMSK = DAINT_IN(0) | DAINT_OUT(0);
-        USB_OTG_DIEPMSK  = DEPINT_XFRC;
-        USB_OTG_DOEPMSK  = DEPINT_XFRC | DEPINT_STUP;
-
-        /* Flush FIFOs */
-        flush_tx(0x10);  /* 0x10 = all TX FIFOs */
-        flush_rx();
-
-        /* Clear all EP interrupt flags */
+        /* Clear EP interrupt flags, clear STALL, set SNAK on all EPs */
         for (uint8_t i = 0; i < 4; i++)
         {
-            USB_OTG_DIEPINT(i) = 0xFFU;
-            USB_OTG_DOEPINT(i) = 0xFFU;
+            USB_OTG_DIEPINT(i)  = 0xFB7FU;
+            USB_OTG_DIEPCTL(i) &= ~DEPCTL_STALL;
+            USB_OTG_DIEPCTL(i) |= DEPCTL_SNAK;
+            USB_OTG_DOEPINT(i)  = 0xFB7FU;
+            USB_OTG_DOEPCTL(i) &= ~DEPCTL_STALL;
+            USB_OTG_DOEPCTL(i) |= DEPCTL_SNAK;
         }
 
+        /* Enable EP0 IN + OUT interrupt masks */
+        USB_OTG_DAINTMSK |= 0x00010001U;   /* DAINT_IN(0) | DAINT_OUT(0) */
+
+        /* Endpoint masks (HAL sets more bits than we had before) */
+        USB_OTG_DOEPMSK |= DEPINT_XFRC | DEPINT_STUP | (1U << 1); /* +EPDM */
+        USB_OTG_DIEPMSK |= DEPINT_XFRC | (1U << 3) | (1U << 1);  /* +TOM +EPDM */
+
+        /* Clear address */
+        USB_OTG_DCFG &= ~DCFG_DAD_MSK;
+
+        /* Setup EP0 to receive SETUP packets */
         ep0_prepare_setup();
+
+        USB_OTG_GINTSTS = GINT_USBRST;
     }
 
     /* ── Enumeration done ── */
     if (gint & GINT_ENUMDNE)
     {
-        USB_OTG_GINTSTS = GINT_ENUMDNE;
+        /* USB_ActivateSetup: clear EP0 IN MPSIZ + clear global IN NAK */
+        USB_OTG_DIEPCTL(0) &= ~DEPCTL_MPS_MSK;
+        USB_OTG_DCTL |= (1U << 8);   /* CGINAK – clear global IN NAK */
 
         /* Set USB turnaround time for Full Speed @ 96 MHz AHB */
         USB_OTG_GUSBCFG &= ~(0xFU << 10);
         USB_OTG_GUSBCFG |= (6U << 10);
 
-        /* Ensure EP0 MPSIZ = 0 (meaning 64 bytes) */
-        USB_OTG_DIEPCTL(0) &= ~DEPCTL_MPS_MSK;
+        USB_OTG_GINTSTS = GINT_ENUMDNE;
     }
 
     /* ── RX FIFO non-empty (data arrived) ── */
@@ -727,12 +743,20 @@ void OTG_FS_IRQHandler(void)
                 USB_OTG_DOEPINT(0) = DEPINT_STUP;
                 process_setup();
             }
-
-            if (epint & DEPINT_XFRC)
+            else if (epint & DEPINT_XFRC)
             {
-                /* EP0 OUT data complete (e.g. SET_LINE_CODING received) */
                 USB_OTG_DOEPINT(0) = DEPINT_XFRC;
-                ep0_send_zlp();   /* send STATUS IN to confirm */
+                if (usb.ep0_data_out)
+                {
+                    /* DATA OUT complete (e.g. SET_LINE_CODING) -> STATUS IN */
+                    usb.ep0_data_out = 0;
+                    ep0_send_zlp();
+                }
+                else
+                {
+                    /* STATUS OUT complete (after DATA IN) -> re-arm for SETUP */
+                    ep0_prepare_setup();
+                }
             }
         }
 
@@ -783,78 +807,132 @@ void USB_CDC_Init(void)
     USB_OTG_FS_PCLK_EN();
     delay(10000);
 
-    /* ── Select internal PHY (Full Speed) – must be done BEFORE core reset ── */
-    USB_OTG_GUSBCFG |= GUSBCFG_PHYSEL;
-    while (!(USB_OTG_GRSTCTL & GRSTCTL_AHBIDL)) {}
+    /* ── NVIC (HAL enables this early, in MspInit) ── */
+    interrupt_Config(IRQ_NO_OTG_FS, ENABLE);
 
-    /* ── Core reset ── */
+    /* ══════════════════════════════════════════════════════════════════
+     *  USB_CoreInit  (matches HAL stm32f4xx_ll_usb.c USB_CoreInit)
+     * ══════════════════════════════════════════════════════════════════ */
+
+    /* Select FS Embedded PHY */
+    USB_OTG_GUSBCFG |= GUSBCFG_PHYSEL;
+
+    /* Core reset (HAL: USB_CoreReset) */
+    while (!(USB_OTG_GRSTCTL & GRSTCTL_AHBIDL)) {}
     USB_OTG_GRSTCTL |= GRSTCTL_CSRST;
     while (USB_OTG_GRSTCTL & GRSTCTL_CSRST) {}
-    delay(100000);
 
-    /* ── Soft-disconnect BEFORE powering transceiver ── */
-    USB_OTG_DCTL |= DCTL_SDIS;
-
-    /* ── Restart PHY clock ── */
-    USB_OTG_PCGCCTL = 0;
-
-    /* ── Power up transceiver ── */
+    /* Activate the USB Transceiver */
     USB_OTG_GCCFG |= GCCFG_PWRDWN;
 
-    /* ── Force device mode (HAL clears both FHMOD+FDMOD, then sets FDMOD) ── */
-    USB_OTG_GUSBCFG &= ~((1U << 29) | (1U << 30));
+    /* ══════════════════════════════════════════════════════════════════
+     *  USB_SetCurrentMode  (matches HAL USB_SetCurrentMode)
+     * ══════════════════════════════════════════════════════════════════ */
+    USB_OTG_GUSBCFG &= ~((1U << 29) | (1U << 30));  /* clear FHMOD + FDMOD */
     USB_OTG_GUSBCFG |= GUSBCFG_FDMOD;
-    delay(700000);  /* HAL uses 50 ms */
 
-    /* ── Disable VBUS sensing (Black Pill has no VBUS sense) ── */
-    USB_OTG_GCCFG &= ~((1U << 18) | (1U << 19));  /* clear VBUSBSEN, VBUSASEN */
-    USB_OTG_GCCFG |= GCCFG_NOVBUSSENS;             /* VBUS always valid */
+    /* Poll GINTSTS.CMOD until device mode confirmed (HAL polls up to 50 ms) */
+    for (uint32_t ms = 0; ms < 50U; ms++)
+    {
+        if ((USB_OTG_GINTSTS & 0x1U) == 0U) break;  /* 0 = device mode */
+        delay(14000);  /* ~1 ms */
+    }
 
-    /* ── Speed = Full Speed ── */
+    /* ══════════════════════════════════════════════════════════════════
+     *  USB_DevInit  (matches HAL stm32f4xx_ll_usb.c USB_DevInit)
+     * ══════════════════════════════════════════════════════════════════ */
+
+    /* Zero all device IN EP TX FIFO registers (HAL: DIEPTXF[0..14] = 0) */
+    for (uint32_t i = 0; i < 15U; i++)
+        MMIO32(USB_OTG_FS_BASEADDR + 0x104U + (i * 0x04U)) = 0U;
+
+    /* VBUS sensing disabled (F411 #else branch in HAL) */
+    USB_OTG_DCTL  |= DCTL_SDIS;               /* soft disconnect */
+    USB_OTG_GCCFG |= GCCFG_NOVBUSSENS;        /* NOVBUSSENS = 1 */
+    USB_OTG_GCCFG &= ~(1U << 18);             /* VBUSBSEN  = 0 */
+    USB_OTG_GCCFG &= ~(1U << 19);             /* VBUSASEN  = 0 */
+
+    /* Restart the Phy Clock */
+    USB_OTG_PCGCCTL = 0U;
+
+    /* Full Speed device */
     USB_OTG_DCFG |= DCFG_DSPD_FS;
 
-    /* ── Configure FIFO sizes ── */
-    USB_OTG_GRXFSIZ   = RX_FIFO_SZ;
-    USB_OTG_DIEPTXF0  = ((uint32_t)TX0_FIFO_SZ << 16) | RX_FIFO_SZ;
-    USB_OTG_DIEPTXF(1) = ((uint32_t)TX1_FIFO_SZ << 16) | (RX_FIFO_SZ + TX0_FIFO_SZ);
-    USB_OTG_DIEPTXF(2) = ((uint32_t)TX2_FIFO_SZ << 16) | (RX_FIFO_SZ + TX0_FIFO_SZ + TX1_FIFO_SZ);
-
-    /* ── Flush and clear everything ── */
+    /* Flush all FIFOs */
     flush_tx(0x10);
     flush_rx();
 
-    USB_OTG_DIEPMSK  = 0;
-    USB_OTG_DOEPMSK  = 0;
-    USB_OTG_DAINTMSK = 0;
+    /* Clear all pending Device Interrupts */
+    USB_OTG_DIEPMSK  = 0U;
+    USB_OTG_DOEPMSK  = 0U;
+    USB_OTG_DAINTMSK = 0U;
 
-    for (uint8_t i = 0; i < 4; i++)
+    /* Deactivate & clear all IN endpoints (HAL checks EPENA first) */
+    for (uint8_t i = 0; i < 4U; i++)
     {
-        USB_OTG_DIEPINT(i) = 0xFFU;
-        USB_OTG_DOEPINT(i) = 0xFFU;
+        if (USB_OTG_DIEPCTL(i) & DEPCTL_EPENA)
+        {
+            if (i == 0U) USB_OTG_DIEPCTL(i) = DEPCTL_SNAK;
+            else         USB_OTG_DIEPCTL(i) = (1U << 30) | DEPCTL_SNAK; /* EPDIS|SNAK */
+        }
+        else
+        {
+            USB_OTG_DIEPCTL(i) = 0U;
+        }
+        USB_OTG_DIEPTSIZ(i) = 0U;
+        USB_OTG_DIEPINT(i)  = 0xFB7FU;
     }
 
-    /* ── Clear all pending global interrupt flags ── */
+    /* Deactivate & clear all OUT endpoints */
+    for (uint8_t i = 0; i < 4U; i++)
+    {
+        if (USB_OTG_DOEPCTL(i) & DEPCTL_EPENA)
+        {
+            if (i == 0U) USB_OTG_DOEPCTL(i) = DEPCTL_SNAK;
+            else         USB_OTG_DOEPCTL(i) = (1U << 30) | DEPCTL_SNAK;
+        }
+        else
+        {
+            USB_OTG_DOEPCTL(i) = 0U;
+        }
+        USB_OTG_DOEPTSIZ(i) = 0U;
+        USB_OTG_DOEPINT(i)  = 0xFB7FU;
+    }
+
+    /* Disable all interrupts, then clear all pending flags */
+    USB_OTG_GINTMSK = 0U;
     USB_OTG_GINTSTS = 0xBFFFFFFFU;
 
-    /* ── Enable interrupts ── */
-    USB_OTG_GINTMSK = GINT_USBRST | GINT_ENUMDNE
-                     | GINT_IEPINT | GINT_OEPINT
-                     | GINT_RXFLVL
-                     | GINT_USBSUSP | GINT_WKUPINT;
+    /* Enable interrupts (non-DMA: RXFLVL first, then device-mode set) */
+    USB_OTG_GINTMSK |= GINT_RXFLVL;
+    USB_OTG_GINTMSK |= GINT_USBRST  | GINT_ENUMDNE
+                      | GINT_IEPINT  | GINT_OEPINT
+                      | GINT_USBSUSP | GINT_WKUPINT;
 
-    USB_OTG_DIEPMSK  = DEPINT_XFRC;
-    USB_OTG_DOEPMSK  = DEPINT_XFRC | DEPINT_STUP;
-    USB_OTG_DAINTMSK = DAINT_IN(0) | DAINT_OUT(0);
+    /* ── USB_DevDisconnect (HAL calls this at end of HAL_PCD_Init) ── */
+    USB_OTG_PCGCCTL &= ~((1U << 0) | (1U << 1));  /* ungate STOPCLK + GATECLK */
+    USB_OTG_DCTL    |= DCTL_SDIS;
 
-    /* ── Enable global interrupt BEFORE connect ── */
+    /* ── Set turnaround time: TRDT = 6 for 96 MHz HCLK ── */
+    USB_OTG_GUSBCFG &= ~(0xFU << 10);
+    USB_OTG_GUSBCFG |= (6U << 10);
+
+    /* ══════════════════════════════════════════════════════════════════
+     *  FIFO configuration (HAL does SetRxFiFo / SetTxFiFo after PCD_Init)
+     * ══════════════════════════════════════════════════════════════════ */
+    USB_OTG_GRXFSIZ    = RX_FIFO_SZ;
+    USB_OTG_DIEPTXF0   = ((uint32_t)TX0_FIFO_SZ << 16) | RX_FIFO_SZ;
+    USB_OTG_DIEPTXF(1) = ((uint32_t)TX1_FIFO_SZ << 16) | (RX_FIFO_SZ + TX0_FIFO_SZ);
+    USB_OTG_DIEPTXF(2) = ((uint32_t)TX2_FIFO_SZ << 16) | (RX_FIFO_SZ + TX0_FIFO_SZ + TX1_FIFO_SZ);
+
+    /* ══════════════════════════════════════════════════════════════════
+     *  HAL_PCD_Start:  enable global interrupt, then connect
+     * ══════════════════════════════════════════════════════════════════ */
     USB_OTG_GAHBCFG |= GAHBCFG_GINTMSK;
 
-    /* ── NVIC ── */
-    interrupt_Config(IRQ_NO_OTG_FS, ENABLE);
-
-    /* ── Connect (remove soft-disconnect) — host sees D+ pull-up now ── */
-    USB_OTG_DCTL &= ~DCTL_SDIS;
-    delay(50000);  /* stabilization */
+    /* USB_DevConnect: ungate PHY clock, clear soft-disconnect */
+    USB_OTG_PCGCCTL &= ~((1U << 0) | (1U << 1));
+    USB_OTG_DCTL    &= ~DCTL_SDIS;
 }
 
 
