@@ -1,66 +1,45 @@
+#include "stm32f411xx.h"
 #include "driver_clock.h"
-#include "driver_systick.h"
-#include "driver_gpio.h"
-#include "driver_usb.h"
 
-#define LED_PORT    GPIOC
-#define LED_PIN     GPIO_PIN_NO_13
+/* PC13 — active low LED on Blackpill */
+#define LED_ON()   (GPIOC->ODR &= ~(1U << 13))
+#define LED_OFF()  (GPIOC->ODR |=  (1U << 13))
+#define LED_TOGGLE() (GPIOC->ODR ^=  (1U << 13))
+
+static void led_init(void)
+{
+    RCC->AHB1ENR |= (1U << 2);                 /* GPIOC clock */
+    GPIOC->MODER &= ~(3U << 26);
+    GPIOC->MODER |=  (1U << 26);               /* PC13 output */
+}
+
+static void delay_ms(volatile uint32_t ms)
+{
+    /* rough busy-wait at 96 MHz — replace with SysTick later */
+    while (ms--) {
+        for (volatile uint32_t i = 0; i < 8000; i++) {}
+    }
+}
 
 int main(void)
 {
-    /*
-     *  1. Configure PLL: HSE 25 MHz -> SYSCLK 96 MHz, USB 48 MHz
-     *
-     *  VCO_in  = 25/25   = 1 MHz
-     *  VCO_out = 1*192   = 192 MHz
-     *  SYSCLK  = 192/2   = 96 MHz
-     *  USB_CLK = 192/4   = 48 MHz  (required by USB)
-     *  APB1    = 96/2    = 48 MHz  (max 50 MHz)
-     *  APB2    = 96/1    = 96 MHz
-     */
-    Clock_PLL_Config_t pll =
-    {
-        .PLLM    = 25,
-        .PLLN    = 192,
-        .PLLP    = 2,
-        .PLLQ    = 4,
+    Clock_PLL_Config_t pll = {
+        .PLLM     = 25,
+        .PLLN     = 192,
+        .PLLP     = 2,
+        .PLLQ     = 4,
         .APB1_PRE = 2,
         .APB2_PRE = 1,
     };
     clock_init_pll(&pll);
-    systick_init(TICK_HZ);
 
-    GPIO_PinConfig_t led =
-    {
-        .pGPIOx          = LED_PORT,
-        .GPIO_PinNumber  = LED_PIN,
-        .GPIO_PinMode    = GPIO_MODE_OUT,
-        .GPIO_PinSpeed   = GPIO_SPEED_LOW,
-        .GPIO_PinOPType  = GPIO_OP_TYPE_PP,
-        .GPIO_PinPuPdControl = GPIO_NO_PUPD,
-        .GPIO_PinAltFunMode  = GPIO_PIN_NO_ALTFN,
-    };
-    GPIO_Init(&led);
-    GPIO_WriteToOutputPin(LED_PORT, LED_PIN, GPIO_PIN_SET); 
+    led_init();
+    LED_OFF();
 
-    USB_CDC_Init();
+    /* TODO Phase 1: usb_hw_init() */
 
-    for (int i = 0; i < 6; i++)
-    {
-        GPIO_ToggleOutputPin(LED_PORT, LED_PIN);
-        ticks_delay(500);
-    }
-
-    uint8_t buf[64];
-
-    while(1)
-    {
-        uint16_t n = USB_CDC_Read(buf, sizeof(buf));
- 
-        if (n > 0)
-        {
-            USB_CDC_Transmit(buf, n);
-            GPIO_ToggleOutputPin(LED_PORT, LED_PIN);
-        }
+    while (1) {
+        LED_TOGGLE();
+        delay_ms(500);
     }
 }
