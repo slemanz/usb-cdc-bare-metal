@@ -2,3 +2,9 @@
 *.bin
 *.o
 *.map
+
+*.md
+!README.md
+
+sample
+*.jdebug.user
