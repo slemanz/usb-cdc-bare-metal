@@ -35,6 +35,7 @@ OBJS		+= $(BUILD_DIR)/syscalls.o
 OBJS		+= $(BUILD_DIR)/startup.o
 
 DRIVERS		+= $(BUILD_DIR)/driver_clock.o
+DRIVERS		+= $(BUILD_DIR)/usb_hw.o
 
 PREREQ = $(BUILD_DIR)
 
