@@ -1,0 +1,8 @@
+device STM32F411CE
+si SWD
+speed 4000
+connect
+loadbin build/usb_cdc.bin, 0x08000000
+r
+g
+q
