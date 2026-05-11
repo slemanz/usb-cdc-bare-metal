@@ -75,11 +75,9 @@ void usb_hw_init(void)
     /* ── 8. Clear any stale interrupt flags ──────────────────────────────── */
     USB_OTG_GINTSTS = 0xFFFFFFFFU;
 
-    /* ── 9. Unmask interrupts ─────────────────────────────────────────────── */
-    /* Phase 1: only USBRST and ENUMDNEM.
-     * RXFLVLM is NOT enabled here: RXFLVL in GINTSTS is read-only and stays
-     * set while the RxFIFO has data — enabling it without draining the FIFO
-     * causes an infinite ISR re-entry. Added in Phase 2 with proper handling. */
+    /* ── 9. Unmask hardware-level interrupts ────────────────────────────────── */
+    /* RXFLVLM, IEPINT, OEPINT are added by usb_core_init() after the protocol
+     * layer is ready to drain the FIFO safely. */
     USB_OTG_GINTMSK = GINTMSK_USBRST
                     | GINTMSK_ENUMDNEM;
 
@@ -93,8 +91,4 @@ void usb_hw_init(void)
     USB_OTG_DCTL &= ~DCTL_SDIS;
 }
 
-/* Phase 1 ISR stub — clears all pending flags, does nothing else yet */
-void OTG_FS_IRQHandler(void)
-{
-    USB_OTG_GINTSTS = USB_OTG_GINTSTS;  /* W1C: write 1 to clear all set bits */
-}
+/* ISR is now implemented in usb_core.c */

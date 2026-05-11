@@ -1,6 +1,7 @@
 #include "stm32f411xx.h"
 #include "driver_clock.h"
 #include "usb_hw.h"
+#include "usb_core.h"
 
 /* PC13 — active low LED on Blackpill */
 #define LED_ON()   (GPIOC->ODR &= ~(1U << 13))
@@ -38,6 +39,7 @@ int main(void)
     LED_OFF();
 
     usb_hw_init();
+    usb_core_init();
 
     while (1) {
         LED_TOGGLE();
