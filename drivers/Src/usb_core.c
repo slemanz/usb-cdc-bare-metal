@@ -1,6 +1,7 @@
 #include "stm32f411xx.h"
 #include "usb_core.h"
 #include "usb_desc.h"
+#include "usb_cdc.h"
 
 /* ── Bit-field helpers ────────────────────────────────────────────────────── */
 
@@ -54,10 +55,13 @@
 #define DCFG_DAD_MASK   (0x7FU << 4)
 
 /* Standard USB requests */
-#define REQ_GET_DESCRIPTOR      6
+#define REQ_GET_STATUS          0
 #define REQ_SET_ADDRESS         5
-#define REQ_SET_CONFIGURATION   9
+#define REQ_GET_DESCRIPTOR      6
 #define REQ_GET_CONFIGURATION   8
+#define REQ_SET_CONFIGURATION   9
+#define REQ_GET_INTERFACE      10
+#define REQ_SET_INTERFACE      11
 
 /* CDC class requests (bmRequestType.Type == Class) */
 #define CDC_SET_LINE_CODING         0x20
@@ -80,7 +84,6 @@ static EP0State      ep0_state;
 static uint32_t      setup_words[2];     /* raw 8-byte setup packet (word-aligned) */
 static const uint8_t *ep0_tx_ptr;        /* next byte to send */
 static uint16_t      ep0_tx_len;         /* bytes remaining to send */
-static uint8_t       ep0_pending_addr;   /* SET_ADDRESS: address to apply after status ZLP */
 static uint8_t       line_coding_buf[7]; /* scratch buffer for SET_LINE_CODING data phase */
 
 /* Default line coding: 9600 baud, 8 data bits, no parity, 1 stop bit */
@@ -207,13 +210,18 @@ static void usb_handle_setup(void)
         }
 
         case REQ_SET_ADDRESS:
-            /* Address must not be applied until after the STATUS ZLP is sent */
-            ep0_pending_addr = (uint8_t)(wVal & 0x7FU);
+            /* RM0383 §22.17.6: program DCFG.DAD BEFORE sending the status ZLP.
+             * The OTG-FS hardware uses the old address for the ZLP itself and
+             * switches to the new one for subsequent traffic; doing it after
+             * the ZLP loses the race against the host's first packet on the
+             * new address (manifests as `device descriptor read/all, error -32`). */
+            USB_OTG_DCFG = (USB_OTG_DCFG & ~DCFG_DAD_MASK)
+                         | (((uint32_t)wVal & 0x7FU) << DCFG_DAD_SHIFT);
             ep0_send_zlp();
             break;
 
         case REQ_SET_CONFIGURATION:
-            /* Phase 2: ACK only — endpoints opened in Phase 3 */
+            if (wVal == 1) usb_cdc_init();   /* open data endpoints */
             ep0_send_zlp();
             break;
 
@@ -222,6 +230,26 @@ static void usb_handle_setup(void)
             ep0_send(&cfg, 1, wLen);
             break;
         }
+
+        case REQ_GET_STATUS: {
+            /* Bus-powered, no remote wakeup (Device); halted=0 (Endpoint).
+             * Same 2-byte zero response works for Device, Interface and EP. */
+            static const uint8_t status[2] = {0, 0};
+            ep0_send(status, 2, wLen);
+            break;
+        }
+
+        case REQ_GET_INTERFACE: {
+            /* Only one alternate setting (0) for both interfaces */
+            static const uint8_t altsetting = 0;
+            ep0_send(&altsetting, 1, wLen);
+            break;
+        }
+
+        case REQ_SET_INTERFACE:
+            /* Only alt-setting 0 is defined — just ACK */
+            ep0_send_zlp();
+            break;
 
         default:
             ep0_stall();
@@ -244,7 +272,7 @@ static void usb_handle_setup(void)
             break;
 
         case CDC_SET_CONTROL_LINE_STATE:
-            /* DTR = wVal bit 0, RTS = wVal bit 1 — store if needed in Phase 4 */
+            usb_cdc_set_control_line(wVal);
             ep0_send_zlp();
             break;
 
@@ -295,16 +323,23 @@ static void handle_rxflvl(void)
     }
 }
 
+/* GRSTCTL RxFIFO flush bits */
+#define GRSTCTL_RXFFLSH (1U << 4)
+
 static void handle_usbrst(void)
 {
     /* Flush all TX FIFOs */
     USB_OTG_GRSTCTL = GRSTCTL_TXFFLSH | GRSTCTL_TXFNUM_ALL;
     while (USB_OTG_GRSTCTL & GRSTCTL_TXFFLSH) {}
 
+    /* Flush RxFIFO — discard any stale data from a previous transaction */
+    USB_OTG_GRSTCTL = GRSTCTL_RXFFLSH;
+    while (USB_OTG_GRSTCTL & GRSTCTL_RXFFLSH) {}
+
     /* Reset EP0 state */
-    ep0_state        = EP0_IDLE;
-    ep0_tx_len       = 0;
-    ep0_pending_addr = 0;
+    ep0_state  = EP0_IDLE;
+    ep0_tx_len = 0;
+    usb_cdc_reset();
 
     /* Unmask EP0 IN and EP0 OUT endpoint interrupts */
     USB_OTG_DAINTMSK |= (1U << 16) | (1U << 0);   /* EP0 OUT | EP0 IN */
@@ -319,32 +354,41 @@ static void handle_enumdne(void)
     USB_OTG_DIEPCTL(0) &= ~3U;
     /* Clear global IN NAK so EP0 IN can transmit */
     USB_OTG_DCTL |= DCTL_CGINAK;
+    /* Re-prime EP0 OUT — hardware may clear EPENA during ENUMDNE processing */
+    ep0_prime_out();
 }
 
 static void handle_iepint(void)
 {
-    /* Only EP0 in Phase 2 */
-    uint32_t diepint = USB_OTG_DIEPINT(0);
+    uint32_t daint = USB_OTG_DAINT & USB_OTG_DAINTMSK;
 
-    if (diepint & DEPINT_XFRC) {
-        USB_OTG_DIEPINT(0) = DEPINT_XFRC;   /* W1C */
+    /* ── EP0 IN ──────────────────────────────────────────────────────────── */
+    if (daint & (1U << 0)) {
+        uint32_t diepint = USB_OTG_DIEPINT(0);
+        if (diepint & DEPINT_XFRC) {
+            USB_OTG_DIEPINT(0) = DEPINT_XFRC;   /* W1C */
 
-        if (ep0_state == EP0_DATA_IN) {
-            if (ep0_tx_len > 0) {
-                ep0_start_in();   /* send next chunk */
-            } else {
+            if (ep0_state == EP0_DATA_IN) {
+                if (ep0_tx_len > 0) {
+                    ep0_start_in();   /* send next chunk */
+                } else {
+                    ep0_state = EP0_IDLE;
+                    /* EP0 OUT already primed at STUP time; wait for STATUS ZLP */
+                }
+            } else if (ep0_state == EP0_STATUS_IN) {
+                /* ZLP for a no-data request finished — address already applied
+                 * for SET_ADDRESS in usb_handle_setup() */
                 ep0_state = EP0_IDLE;
-                /* EP0 OUT already primed (done at STUP time); wait for STATUS ZLP */
+                ep0_prime_out();
             }
-        } else if (ep0_state == EP0_STATUS_IN) {
-            /* ZLP sent — now apply SET_ADDRESS if pending */
-            if (ep0_pending_addr) {
-                USB_OTG_DCFG = (USB_OTG_DCFG & ~DCFG_DAD_MASK)
-                             | ((uint32_t)ep0_pending_addr << DCFG_DAD_SHIFT);
-                ep0_pending_addr = 0;
-            }
-            ep0_state = EP0_IDLE;
-            ep0_prime_out();   /* ready for next SETUP */
+        }
+    }
+
+    /* ── EP1 IN (Bulk IN — CDC data to host) ─────────────────────────────── */
+    if (daint & (1U << 1)) {
+        if (USB_OTG_DIEPINT(1) & DEPINT_XFRC) {
+            USB_OTG_DIEPINT(1) = DEPINT_XFRC;
+            usb_cdc_on_tx_done();
         }
     }
 }
