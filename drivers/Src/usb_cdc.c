@@ -15,14 +15,14 @@
 /* ── FIFO layout (all sizes in 32-bit words) ─────────────────────────────── *
  * [  0 .. 127] RxFIFO       — 128 words  (set in usb_hw_init)
  * [128 .. 191] EP0 TxFIFO   —  64 words  (set in usb_hw_init)
- * [192 .. 255] EP1 TxFIFO   —  64 words  (set here)
- * [256 .. 271] EP2 TxFIFO   —  16 words  (set here)
- * Total: 272 / 320 words used
+ * [192 .. 319] EP1 TxFIFO   — 128 words  (set here) — fits 2× 64-byte packets
+ * Total: 320 / 320 words used (entire OTG-FS FIFO RAM)
+ *
+ * EP2 (interrupt IN) shares TxFIFO 0 with EP0: we never push notifications,
+ * so the EP just NAKs the host poll forever — no FIFO of its own is needed.
  * ─────────────────────────────────────────────────────────────────────────── */
 #define EP1_TXFIFO_START  192U
-#define EP1_TXFIFO_DEPTH   64U
-#define EP2_TXFIFO_START  256U
-#define EP2_TXFIFO_DEPTH   16U
+#define EP1_TXFIFO_DEPTH  128U
 
 /* ── State ───────────────────────────────────────────────────────────────── */
 static volatile uint8_t tx_busy;
@@ -36,7 +36,6 @@ void usb_cdc_init(void)
     /* ── TxFIFO allocation ───────────────────────────────────────────────── */
     /* DIEPTXF(n): bits[31:16] = depth, bits[15:0] = start address (words) */
     USB_OTG_DIEPTXF(1) = (EP1_TXFIFO_DEPTH << 16) | EP1_TXFIFO_START;
-    USB_OTG_DIEPTXF(2) = (EP2_TXFIFO_DEPTH << 16) | EP2_TXFIFO_START;
 
     /* ── EP1 IN — Bulk IN, 64 bytes, TxFIFO 1 ───────────────────────────── */
     USB_OTG_DIEPCTL(1) = 64U           /* MPS = 64 bytes */
@@ -51,11 +50,14 @@ void usb_cdc_init(void)
                        | EPTYPE_BULK
                        | DEPCTL_SD0PID;
 
-    /* ── EP2 IN — Interrupt IN, 8 bytes, TxFIFO 2 (notifications) ────────── */
+    /* ── EP2 IN — Interrupt IN, 8 bytes ───────────────────────────────────
+     * TXFNUM = 0: share EP0's TxFIFO.  We never actually push notifications,
+     * so the endpoint NAKs the host's 10ms polls forever — no FIFO budget
+     * needed. */
     USB_OTG_DIEPCTL(2) = 8U
                        | DEPCTL_USBAEP
                        | EPTYPE_INTR
-                       | (2U << 22)    /* TXFNUM = 2 */
+                       | (0U << 22)    /* TXFNUM = 0 (shares EP0 TxFIFO) */
                        | DEPCTL_SD0PID;
 
     /* ── Enable endpoint interrupts for EP1 IN only ──────────────────────── *
