@@ -63,8 +63,12 @@ void usb_hw_init(void)
     /* RM0383 §22.17.1: wait ≥ 25 ms after FDMOD before accessing device regs */
     for (volatile uint32_t i = 0; i < 2400000U; i++) {}
 
+    /* Soft-disconnect D+ pull-up while we finish configuring.  Mirrors what
+     * HAL does in USB_DevInit: keeps the host blind until step 12 clears it. */
+    USB_OTG_DCTL |= DCTL_SDIS;
+
     /* ── 6. Device config: full-speed ────────────────────────────────────── */
-    USB_OTG_DCFG = DCFG_DSPD_FS;       /* bits[1:0] = 11: FS internal PHY */
+    USB_OTG_DCFG |= DCFG_DSPD_FS;      /* bits[1:0] = 11: FS internal PHY */
 
     /* ── 7. FIFO layout (all sizes in 32-bit words):
      *      [0 .. 127]   RxFIFO (shared receive buffer, 128 words)
