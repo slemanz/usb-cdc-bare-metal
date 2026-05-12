@@ -336,6 +336,17 @@ static void handle_usbrst(void)
     USB_OTG_GRSTCTL = GRSTCTL_RXFFLSH;
     while (USB_OTG_GRSTCTL & GRSTCTL_RXFFLSH) {}
 
+    /* Per HAL_PCD_IRQHandler reset path: clear pending EP IRQ flags, lift
+     * any leftover STALL, queue SNAK on every endpoint.  Without this a bus
+     * reset mid-transfer can leave EPENA/STALL set and stall the next
+     * enumeration. 0xFB7F is the W1C mask for DIEPINT/DOEPINT bits. */
+    for (uint8_t i = 0; i < 4; i++) {
+        USB_OTG_DIEPINT(i) = 0xFB7FU;
+        USB_OTG_DIEPCTL(i) = (USB_OTG_DIEPCTL(i) & ~DEPCTL_STALL) | DEPCTL_SNAK;
+        USB_OTG_DOEPINT(i) = 0xFB7FU;
+        USB_OTG_DOEPCTL(i) = (USB_OTG_DOEPCTL(i) & ~DEPCTL_STALL) | DEPCTL_SNAK;
+    }
+
     /* Reset EP0 state */
     ep0_state  = EP0_IDLE;
     ep0_tx_len = 0;
@@ -352,6 +363,13 @@ static void handle_enumdne(void)
 {
     /* Full-speed: EP0 MPS = 64 bytes (DIEPCTL0 bits[1:0] = 00) */
     USB_OTG_DIEPCTL(0) &= ~3U;
+
+    /* RM0383 §22.16.2: GUSBCFG.TRDT (bits[13:10]) must match HCLK once the
+     * enumeration speed is known.  HCLK = 96 MHz at full-speed → TRDT = 6.
+     * Reset value is 2, which works for ≈ 24 MHz HCLK and otherwise drifts
+     * EP0 turnaround into babble territory on some hosts/hubs. */
+    USB_OTG_GUSBCFG = (USB_OTG_GUSBCFG & ~(0xFU << 10)) | (6U << 10);
+
     /* Clear global IN NAK so EP0 IN can transmit */
     USB_OTG_DCTL |= DCTL_CGINAK;
     /* Re-prime EP0 OUT — hardware may clear EPENA during ENUMDNE processing */
