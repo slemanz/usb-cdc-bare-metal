@@ -2,6 +2,7 @@
 #include "driver_clock.h"
 #include "usb_hw.h"
 #include "usb_core.h"
+#include "usb_cdc.h"
 
 /* PC13 — active low LED on Blackpill */
 #define LED_ON()   (GPIOC->ODR &= ~(1U << 13))
@@ -44,5 +45,8 @@ int main(void)
     while (1) {
         LED_TOGGLE();
         delay_ms(500);
+        if (usb_cdc_connected()) {
+            usb_cdc_write((const uint8_t *)"Hello World\r\n", 13);
+        }
     }
 }
