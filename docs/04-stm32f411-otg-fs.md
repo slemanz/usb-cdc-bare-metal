@@ -1,11 +1,6 @@
 # 04 — STM32F411 OTG-FS Peripheral
 
-> **Learning goal:** Map the USB concepts from `00-usb-overview.md` to the
-> actual hardware registers you'll be writing to.
-
 Reference: **RM0383**, Chapter 22 "USB on-the-go full-speed (OTG_FS)".
-
----
 
 ## Peripheral Base Address
 
@@ -17,8 +12,6 @@ Reference: **RM0383**, Chapter 22 "USB on-the-go full-speed (OTG_FS)".
 #define DEVICE_BASE       0x800   // Device-mode CSR
 #define FIFO_BASE(n)      (0x1000 + (n) * 0x1000)  // Data FIFOs
 ```
-
----
 
 ## Key Registers You Will Use
 
@@ -112,8 +105,6 @@ USB_OTG_FS->DIEPTXF[0] = (128 << 16) | 192;  // DIEPTXF1 is DIEPTXF[0]
 
 The FIFO start addresses must be contiguous (each starts where the previous ends).
 
----
-
 ## Interrupt Flow
 
 ```
@@ -139,8 +130,6 @@ OTG_FS_IRQHandler()
                          ├── EP0: STUP → setup packet ready → call usb_handle_setup()
                          └── EP1: XFRC → RX complete → notify app, re-prime EP1 OUT
 ```
-
----
 
 ## Startup Sequence (bare-metal)
 
@@ -209,8 +198,6 @@ void usb_hw_init(void) {
 }
 ```
 
----
-
 ## Priming EP0 OUT for Setup Packets
 
 After a USB Reset (and after each SETUP transaction completes), you must
@@ -228,8 +215,6 @@ void usb_ep0_prime_out(void) {
         USB_OTG_DOEPCTL_CNAK;
 }
 ```
-
----
 
 ## Sending Data on EP0 IN
 
@@ -256,8 +241,6 @@ void usb_ep0_send(const uint8_t *buf, uint16_t len, uint16_t max_len) {
     }
 }
 ```
-
----
 
 ## Reading from RxFIFO
 
@@ -286,9 +269,3 @@ void usb_rx_fifo_read(void) {
     // pktsts == 0x03 (STS_XFER_COMP) and others: no data to read
 }
 ```
-
----
-
-## Next
-
-→ [05 — Driver Architecture](05-driver-architecture.md)

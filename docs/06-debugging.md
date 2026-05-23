@@ -1,10 +1,5 @@
 # 06 — Debugging Bare-Metal USB
 
-> USB debugging is hard because errors are silent: the host just stops
-> retrying and moves on. This page documents every technique that actually works.
-
----
-
 ## The Debugging Stack (use in order)
 
 ### Level 1 — LED Blink Codes (free, always works)
@@ -116,8 +111,6 @@ A cheap 8-channel logic analyzer (Cypress FX2 clone, ~$10) with
 This lets you see SYNC, PID, address, endpoint, data, CRC at the bit level.
 Essential when the host doesn't even attempt enumeration.
 
----
-
 ## Failure Modes and Fixes
 
 ### "Device not recognized" immediately after plug-in
@@ -216,8 +209,6 @@ p/x *(volatile uint32_t*)0x50000818
 # RxFIFO status (peek without pop)
 p/x *(volatile uint32_t*)0x5000001C
 ```
-
----
 
 ## Systematic Testing Protocol
 

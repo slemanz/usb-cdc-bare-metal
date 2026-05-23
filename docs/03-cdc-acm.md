@@ -1,11 +1,6 @@
 # 03 — CDC-ACM: USB Virtual Serial Port
 
-> **Learning goal:** Understand exactly what descriptors and class requests
-> make the OS see a virtual serial port — and why each field matters.
-
 Reference: *USB CDC 1.2 Specification* (free at usb.org)
-
----
 
 ## Why CDC-ACM?
 
@@ -21,8 +16,6 @@ The protocol is a thin wrapper over raw bulk endpoints. The serial port
 parameters (baud rate, parity, stop bits) that the host sends are essentially
 advisory — a USB device doesn't have a real UART, so it can accept any
 `SET_LINE_CODING` and silently ignore the values.
-
----
 
 ## Descriptor Structure
 
@@ -50,8 +43,6 @@ Total: 9+8+9+5+5+4+5+7+9+7+7 = **75 bytes**
 Wait — why 75 not 67? The sample uses 67, some implementations use 75.
 The difference is whether the IAD is included. Always include it — Windows
 may misbehave without it.
-
----
 
 ## Descriptor Bytes, Field by Field
 
@@ -195,8 +186,6 @@ Some hosts will refuse to configure the device if it's missing.
 0x00,         // bInterval = 0
 ```
 
----
-
 ## Class Requests
 
 These arrive as SETUP packets on EP0 after enumeration.
@@ -239,8 +228,6 @@ Response: ZLP.
 
 Return STALL on EP0 IN (or just ACK with ZLP — the host usually doesn't care).
 
----
-
 ## TX/RX Flow After Enumeration
 
 ### Sending (device → host, EP1 IN)
@@ -263,8 +250,6 @@ For data > 64 bytes: split into 64-byte packets. Set `PKTCNT` accordingly.
    - `epnum=1, pktsts=STS_DATA_UPDT` → read `bcnt` bytes from `FIFO[0]`
 4. `OEPINT.EP1.XFRC` fires → re-prime EP1 OUT for next packet
 5. Application reads from `rx_buf`
-
----
 
 ## Connection State Machine
 
@@ -290,8 +275,6 @@ CONFIGURED or RESET
 The important transition is `CONFIGURED → CONNECTED`. Do not send data
 before DTR=1 — bytes will be lost because no terminal is reading them.
 
----
-
 ## Common Mistakes
 
 | Symptom | Likely cause |
@@ -302,9 +285,3 @@ before DTR=1 — bytes will be lost because no terminal is reading them.
 | RX never fires | Forgot to re-prime EP1 OUT after first packet |
 | TX works once then stops | `tx_busy` flag never cleared (XFRC interrupt masked) |
 | Garbled data on TX | Byte count in `DIEPTSIZ` doesn't match bytes written to FIFO |
-
----
-
-## Next
-
-→ [04 — STM32F411 OTG-FS Peripheral](04-stm32f411-otg-fs.md)

@@ -4,8 +4,6 @@ Descriptors are read-only data structures stored in flash. The host reads them
 during enumeration to learn the device's identity, configuration, and
 capabilities. All multi-byte fields are **little-endian**.
 
----
-
 ## Device Descriptor (18 bytes)
 
 One per device. Identifies the device to the host.
@@ -33,8 +31,6 @@ const uint8_t device_desc[] = {
 - `bDeviceClass = 0x02` tells the host this is a CDC device (class defined at
   device level, not interface level — required for Windows CDC-ACM)
 - `bMaxPacketSize0 = 64` — EP0 can handle up to 64 bytes per transaction
-
----
 
 ## Configuration Descriptor Block (67 bytes total)
 
@@ -152,8 +148,6 @@ The host must still see it in the descriptor or enumeration fails.
 0x00,       // bInterval (ignored for bulk)
 ```
 
----
-
 ## String Descriptors
 
 All strings use UTF-16LE encoding. Each descriptor starts with a 2-byte header.
@@ -178,8 +172,6 @@ const uint8_t str0[] = {
     { 2 + sizeof(s) - 2, 0x03, s }
 // where s is a wide-char literal: u"STM32 Virtual COM Port"
 ```
-
----
 
 ## Descriptor Layout Summary
 
@@ -208,8 +200,6 @@ Total:                 75 bytes  ← use this as wTotalLength
 > **Note:** CLAUDE.md originally listed 67 bytes — that was missing the IAD (8
 > bytes). The correct total for IAD + all CDC functional descriptors is **75**.
 > `wTotalLength` must match exactly or the host will truncate or reject.
-
----
 
 ## Descriptor Type Constants
 

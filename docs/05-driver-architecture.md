@@ -1,10 +1,5 @@
 # 05 — Driver Architecture
 
-> **Learning goal:** Understand the layering of our bare-metal driver and
-> why each layer is designed the way it is.
-
----
-
 ## Design Goals
 
 1. **Fits in ≤ 16 KB flash** — bootloader budget
@@ -12,8 +7,6 @@
 3. **No OS, no HAL** — direct register access only
 4. **Readable** — every non-obvious register write has a comment
 5. **Incrementally testable** — each layer can be verified independently
-
----
 
 ## Layer Diagram
 
@@ -48,8 +41,6 @@
 └─────────────────────────────────────────────────────┘
 ```
 
----
-
 ## File Responsibilities
 
 ### `driver/src/usb_hw.c` + `driver/include/usb_hw.h`
@@ -71,8 +62,6 @@ Does NOT know:
 - What a descriptor is
 - What CDC is
 - What state the USB enumeration is in
-
----
 
 ### `driver/src/usb_core.c` + `driver/include/usb_core.h`
 
@@ -101,8 +90,6 @@ void usb_core_set_class_handler(
 );
 ```
 
----
-
 ### `driver/src/usb_desc.c` + `driver/include/usb_desc.h`
 
 What: Descriptor data stored in flash (`const`). Zero runtime overhead.
@@ -119,8 +106,6 @@ extern const uint8_t usb_desc_str_serial[];
 // Helper: find string descriptor by index
 const uint8_t *usb_desc_get_string(uint8_t index, uint16_t *len);
 ```
-
----
 
 ### `driver/src/usb_cdc.c` + `driver/include/usb_cdc.h`
 
@@ -146,8 +131,6 @@ static volatile uint16_t rx_head, rx_tail;
 static LineCoding line_coding;
 static uint8_t    line_state;   // DTR | RTS
 ```
-
----
 
 ## ISR Structure
 
@@ -196,8 +179,6 @@ void OTG_FS_IRQHandler(void) {
 }
 ```
 
----
-
 ## State Machine
 
 ```
@@ -211,8 +192,6 @@ usb_state_t:
 Global variable: `static volatile usb_state_t g_usb_state;`
 
 The CDC layer checks `g_usb_state == USB_STATE_CONFIGURED` before writing.
-
----
 
 ## Memory Budget Analysis
 
@@ -242,9 +221,3 @@ Estimated RAM usage:
 | `line_coding` | 7 bytes  |
 | Stack         | ~1 KB    |
 | **Total**     | **~1.3 KB** |
-
----
-
-## Next
-
-→ [06 — Debugging](06-debugging.md)
