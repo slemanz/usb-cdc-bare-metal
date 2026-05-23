@@ -31,9 +31,6 @@ Read these in order before writing any code:
 | [docs/05-driver-architecture.md](docs/05-driver-architecture.md) | Our driver layering and design decisions |
 | [docs/06-debugging.md](docs/06-debugging.md) | How to debug bare-metal USB (tools, failure modes, fixes) |
 
-For Claude Code: see [CLAUDE.md](CLAUDE.md) for the full implementation guide
-including development phases, coding rules, and register reference.
-
 ## Development Phases
 
 | Phase | Goal | Verify |
